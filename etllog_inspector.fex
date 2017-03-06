@@ -1,0 +1,225 @@
+-SET &ECHO='ALL';
+-*******************************************************************************************************************************
+-*	etllog_inspector.fex
+-*	2016/05/23, v0.2
+-*	Daniel González Marcos
+-*	dagonzalezm@indra.es
+-*	@glezo1
+-*	Avenida de Bruselas, Rojo 2, 124 [As of 2016/05/23]
+-*	USE:
+-*		General speaking, a certain execution will trigger a set of subsequent warnings/erros.
+-*		Instead of considering each line like 'Error' or 'Warning', the secuence itself will be marked as warning/errors.
+-*		Only errors will be displayed.
+-*		To achieve this, 4 tokens are carried in pre-analysis (well, post-analysis, indeed)
+-*		Just fill the 6 constants below (or, as it was aimed for, call it with parameters) to retrieve data from ETLLOG
+-*		DATE_FROM:	must be in the format yyyy/MM/dd.
+-*		DATE_TO:	must be in the format yyyy/MM/dd.
+-*		JOB_NAME:	in the shape of '<dataflow_name>' if only one process must be queried. 
+-*					Otherwise, in the shape of: '<dataflow_name_a' || ''',''' || 'dataflow_name_b' || ...
+-*					You can alsways specify '_FOC_NULL' to retrieve al dataflow in the date range.
+-*	VERSION TRACK
+-*		0.2		Adapted both for 8.0.08 and 8.1.05 WebFOCUS releases
+-*				Parametrized output
+-*					&OUTPUT_FORMAT	={'HTML','XLSX'}
+-*					&OUTPUT_DESTINY	={'STDOUT',<path>}	if html-stdout, by screen. if xlsx-stoudout, pchold
+-*		TODO!
+-*				I should cross etlstats & etllog to retrieve more verbose information
+-*******************************************************************************************************************************
+
+
+-*USER*INPUT**************************************************************
+-DEFAULT &DATE_FROM			= '2016/11/06 00:00:00';
+-DEFAULT &DATE_TO			= '2016/11/09 23:59:59';
+-DEFAULT &JOB_NAME			= 'pfdep841f';
+-DEFAULT &APPNAME			= '_FOC_NULL';
+-DEFAULT &OUTPUT_FORMAT		= 'HTML';
+-DEFAULT &OUTPUT_DESTINY	= 'STDOUT';
+-************************************************************************
+
+-SET &OUTPUT_CHAIN	=			IF '&OUTPUT_FORMAT.EVAL' EQ 'HTML' 											THEN	''
+-						ELSE	IF '&OUTPUT_FORMAT.EVAL' EQ 'XLSX' AND '&OUTPUT_DESTINY.EVAL' EQ 'STDOUT'	THEN	'ON TABLE PCHOLD FORMAT XLSX'
+-						ELSE	IF '&OUTPUT_FORMAT.EVAL' EQ 'XLSX' AND '&OUTPUT_DESTINY.EVAL' NE 'STDOUT'	THEN	'ON TABLE HOLD AS '||'&OUTPUT_DESTINY.EVAL'||' FORMAT XLSX'
+-						ELSE																						'';
+ 
+-TYPE FROM: &DATE_FROM.EVAL
+-TYPE TO  : &DATE_TO.EVAL
+-TYPE JOB : &JOB_NAME.EVAL
+-TYPE DIR : &APPNAME.EVAL
+-TYPE OUT : &OUTPUT_CHAIN.EVAL 
+
+
+DEFINE FILE ETLLOG
+	DATE_FORMATTED/A19			=EDIT(DATE_STAMP,'9999/99/99 99:99:99');
+-*We found a bug, so that the column DATE_STAMP contains weird data.
+	DATE_STAMP_BUG/A1			=IF DATE_STAMP LIKE '%BT0%' THEN 'S' ELSE 'N';
+	DATE_FORMATTED_BUG/A19		=EDIT(JOBNAME,'9999/99/99 99:99:99');
+	ULTIMATE_DATE_FORMATTED/A19	=IF DATE_STAMP_BUG EQ 'S' THEN DATE_FORMATTED_BUG ELSE DATE_FORMATTED;
+END
+TABLE FILE ETLLOG
+PRINT 
+	ULTIMATE_DATE_FORMATTED		AS DATE_FORMATTED
+-*Column counter starts at 1 for each execution. To reverse the order, we will need a FOCLIST-ish.
+	COMPUTE LINE_COUNTER/D20=LINE_COUNTER+1;
+	APPNAME
+	REQ_NAME
+	COUNTER
+	COMPUTE LAST_COUNTER_1/I9=LAST COUNTER; 
+	COMPUTE LAST_COUNTER_2/I9=LAST LAST_COUNTER_1; 
+	COMPUTE LAST_COUNTER_3/I9=LAST LAST_COUNTER_2; 
+	COMPUTE LAST_MSG_CODE_1/A12=LAST MSG_CODE; 
+	COMPUTE LAST_MSG_CODE_2/A12=LAST LAST_MSG_CODE_1; 
+	COMPUTE LAST_MSG_CODE_3/A12=LAST LAST_MSG_CODE_2; 
+-* Exclusion treatment: (FOC2590),(FOC2594)
+	COMPUTE IS_EXCEPTION_ONE/A1=IF (COUNTER EQ LAST_COUNTER_1+1) AND (MSG_CODE EQ '(FOC2594)' AND LAST_MSG_CODE_1 EQ '(FOC2590)')  THEN 'S' ELSE 'N'; 
+-* Exclusion treatment: (FOC2906) "WARNING: <amper_variable> WILL BE OVERWRITTEN BY -READFILE <hold_name>
+	COMPUTE IS_EXCEPTION_TWO/A1=IF (MSG_CODE EQ '(FOC2906)') THEN 'S' ELSE 'N'; 
+-* Exclusion treatment: (FOC2506),(FOC2516)
+	COMPUTE IS_EXCEPTION_THREE/A1=IF (COUNTER EQ LAST_COUNTER_1+1) AND (MSG_CODE EQ '(FOC2516)' AND LAST_MSG_CODE_1 EQ '(FOC2506)')  THEN 'S' ELSE 'N'; 
+-* Exclusion treatment: (FOC2590),(FOC2592)
+	COMPUTE IS_EXCEPTION_FOUR/A1=IF (COUNTER EQ LAST_COUNTER_1+1) AND (MSG_CODE EQ '(FOC2592)' AND LAST_MSG_CODE_1 EQ '(FOC2590)')  THEN 'S' ELSE 'N'; 
+-* Exclusion treatment: (FOC2590),(FOC2599),(FOC2641)
+	COMPUTE IS_EXCEPTION_FIVE/A1=IF 1=1
+									AND (COUNTER 		EQ LAST_COUNTER_1+1) AND (MSG_CODE 			EQ '(FOC2641)' AND LAST_MSG_CODE_1 EQ '(FOC2599)')
+									AND (LAST_COUNTER_1 EQ LAST_COUNTER_2+1) AND (LAST_MSG_CODE_1	EQ '(FOC2599)' AND LAST_MSG_CODE_2 EQ '(FOC2590)')
+											THEN 'S' ELSE 'N';
+-* Exclusion treatment: (FOC2590),(FOC2599)
+	COMPUTE IS_EXCEPTION_SIX/A1=IF (COUNTER EQ LAST_COUNTER_1+1) AND (MSG_CODE EQ '(FOC2599)' AND LAST_MSG_CODE_1 EQ '(FOC2590)')  THEN 'S' ELSE 'N'; 
+-* Exclusion treatment: (FOC1364) [lines modified by SQLORA block]
+	COMPUTE IS_EXCEPTION_SEVEN/A1=IF MSG_CODE EQ '(FOC1364)' THEN 'S' ELSE 'N'; 
+-* Exclusion treatment: (FOC2525),(FOC2509),(FOC2524)
+	COMPUTE IS_EXCEPTION_EIGHT/A1=IF 1=1
+									AND (COUNTER 		EQ LAST_COUNTER_1+1) AND (MSG_CODE 			EQ '(FOC2524)' AND LAST_MSG_CODE_1 EQ '(FOC2509)')
+									AND (LAST_COUNTER_1 EQ LAST_COUNTER_2+1) AND (LAST_MSG_CODE_1	EQ '(FOC2509)' AND LAST_MSG_CODE_2 EQ '(FOC2525)')
+											THEN 'S' ELSE 'N';
+	COMPUTE IS_EXCEPTION/A50=	IF		IS_EXCEPTION_ONE	EQ 'S'	THEN 'ONE_2590_2594' 
+								ELSE IF	IS_EXCEPTION_TWO	EQ 'S'	THEN 'TWO_2906' 
+								ELSE IF	IS_EXCEPTION_THREE	EQ 'S'	THEN 'THREE_2506_2516' 
+								ELSE IF	IS_EXCEPTION_FOUR	EQ 'S'	THEN 'FOUR_2590_2592'
+								ELSE IF	IS_EXCEPTION_FIVE	EQ 'S'	THEN 'FIVE_2590_2599_2641'
+								ELSE IF	IS_EXCEPTION_SIX	EQ 'S'	THEN 'SIX_2590_2599'
+								ELSE IF	IS_EXCEPTION_SEVEN	EQ 'S'	THEN 'SEVEN_1364'
+								ELSE IF	IS_EXCEPTION_EIGHT	EQ 'S'	THEN 'EIGHT_2525_2509_2524'
+								ELSE '-'; 
+-*	FK violation detail is into next line, so:								
+	COMPUTE MSG_CODE/A12 =			IF LAST MSG_CODE EQ '(FOC1573)' AND MSG_CODE EQ ''	THEN	'(FOC1573)' 
+															ELSE	IF LAST MSG_CODE EQ '(FOC1400)' AND MSG_CODE EQ ''	THEN	'(FOC1400)' 
+															ELSE	IF LAST MSG_CODE EQ '(FOC1417)' AND MSG_CODE EQ ''	THEN	'(FOC1417)' 
+-*(FOC415)          TRANS     3 REJECTED  NOMATCH TABLE. #accepted, #rejected is in ext line
+															ELSE	IF LAST MSG_CODE EQ '(FOC415)' AND MSG_CODE EQ ''	THEN	'(FOC415)' 
+ 
+															ELSE																																MSG_CODE; AS MSG_CODE
+	MSG_LINE		AS MSG_LINE
+WHERE ULTIMATE_DATE_FORMATTED GE '&DATE_FROM.EVAL' AND ULTIMATE_DATE_FORMATTED LE '&DATE_TO.EVAL'
+WHERE REQ_NAME IN ('&JOB_NAME.EVAL');
+WHERE APPNAME IN ('&APPNAME.EVAL');
+-*sadly, the fk violation detail comes in separate line with empty MSG_CODE
+-*WHERE MSG_CODE NE ''
+ON TABLE SET ASNAMES ON
+ON TABLE SET HOLDLIST PRINTONLY
+ON TABLE HOLD AS ETLLOG_INSPECTOR_A
+END
+-RUN
+ 
+ 
+ 
+TABLE FILE ETLLOG_INSPECTOR_A
+PRINT *
+WHERE MSG_CODE NE ''
+ON TABLE HOLD AS ETLLOG_INSPECTOR_A
+END
+-RUN
+ 
+
+ 
+-*we reverse the log to fulfill the 2590 in the tuple 2590-2594 etc.
+TABLE FILE ETLLOG_INSPECTOR_A
+PRINT
+	DATE_FORMATTED
+	LINE_COUNTER
+	APPNAME
+	REQ_NAME
+	COUNTER
+	LAST_COUNTER_1
+	LAST_COUNTER_2
+	LAST_COUNTER_3
+	LAST_MSG_CODE_1
+	LAST_MSG_CODE_2
+	LAST_MSG_CODE_3
+	IS_EXCEPTION_ONE
+	IS_EXCEPTION_TWO
+	IS_EXCEPTION_THREE
+	IS_EXCEPTION_FOUR
+	IS_EXCEPTION_FIVE
+	IS_EXCEPTION_SIX
+	IS_EXCEPTION_SEVEN
+	IS_EXCEPTION_EIGHT
+	IS_EXCEPTION
+	MSG_CODE      
+	MSG_LINE
+	COMPUTE LAST_IS_EXCEPTION_1/A50=LAST IS_EXCEPTION;
+	COMPUTE LAST_IS_EXCEPTION_2/A50=LAST LAST_IS_EXCEPTION_1;
+	COMPUTE LAST_IS_EXCEPTION_3/A50=LAST LAST_IS_EXCEPTION_2;
+	COMPUTE FLUSH_THIS_EXCEPTION_LINE/A50=	IF		IS_EXCEPTION NE '-'									THEN	'S'
+											ELSE IF	LAST_IS_EXCEPTION_1		EQ 'ONE_2590_2594'			THEN	'S'
+											ELSE IF	LAST_IS_EXCEPTION_1		EQ 'THREE_2506_2516'		THEN	'S'
+											ELSE IF	LAST_IS_EXCEPTION_1		EQ 'FOUR_2590_2592'			THEN	'S'
+											ELSE IF	LAST_IS_EXCEPTION_1		EQ 'SIX_2590_2599'			THEN	'S'
+											ELSE																'N';
+BY HIGHEST LINE_COUNTER NOPRINT
+ON TABLE SET ASNAMES ON
+ON TABLE SET HOLDLIST PRINTONLY
+ON TABLE HOLD AS ETLLOG_INSPECTOR_B
+END
+-RUN
+ 
+TABLE FILE ETLLOG_INSPECTOR_B
+PRINT
+	DATE_FORMATTED
+	LINE_COUNTER
+	APPNAME
+	REQ_NAME
+	MSG_CODE      
+	MSG_LINE
+BY LOWEST DATE_FORMATTED	NOPRINT
+BY LOWEST REQ_NAME			NOPRINT
+BY LOWEST LINE_COUNTER		NOPRINT
+-*avoid flow control traces
+WHERE MSG_CODE NOT LIKE '(ICM%'
+WHERE MSG_CODE NE '(FOC2590)'
+WHERE MSG_CODE NE '(FOC2594)'
+WHERE MSG_CODE NE '(FOC2525)'
+WHERE MSG_CODE NE '(FOC2509)'
+WHERE MSG_CODE NE '(FOC405)'
+-*"clasificar en un campo computado"
+WHERE MSG_CODE NE '(FOC32421)'
+-*"JOIN NATIVO GESTIONADO POR LA INTERFAZ SELECCIONADA DEBI"
+WHERE MSG_CODE NE '(FOC2506)'
+-*-----------------------------------------------
+-*NEW STUFF SINCE 8.1.05 ------------------------
+-*-----------------------------------------------
+WHERE MSG_CODE NE '*'
+WHERE MSG_CODE NE '(FOC2555)'
+WHERE MSG_CODE NE '(FOC2524)'
+WHERE MSG_CODE NE '(FOC2558)'
+-*-----------------------------------------------
+-*END NEW STUFF SINCE 8.1.05 --------------------
+-*-----------------------------------------------
+WHERE FLUSH_THIS_EXCEPTION_LINE EQ 'N'
+&OUTPUT_CHAIN.EVAL
+END
+-RUN
+ 
+-IF &LINES EQ 0 GOTO NO_DATA ELSE GOTO END_FILE;
+ 
+-NO_DATA
+TABLE FILE ETLLOG
+PRINT
+	COMPUTE INFO/A20='No hay datos';
+BY APPNAME NOPRINT
+WHERE RECORDLIMIT EQ 1
+&OUTPUT_CHAIN.EVAL
+END
+-RUN
+ 
+-END_FILE
+-*******************************************************************
